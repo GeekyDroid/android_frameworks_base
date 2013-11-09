@@ -95,6 +95,8 @@ final class ElectronBeam {
     private final int mHWRotation;
     private final boolean mSwapNeeded;
 
+    private int mElectronBeamMode;
+
     // Texture names.  We only use one texture, which contains the screenshot.
     private final int[] mTexNames = new int[1];
     private boolean mTexNamesGenerated;
@@ -121,10 +123,11 @@ final class ElectronBeam {
     public static final int MODE_FADE = 2;
 
 
-    public ElectronBeam(DisplayManagerService displayManager) {
+    public ElectronBeam(DisplayManagerService displayManager, int mode) {
         mDisplayManager = displayManager;
         mHWRotation = Integer.parseInt(SystemProperties.get("ro.sf.hwrotation", "0")) / 90;
         mSwapNeeded = mHWRotation % 2 == 1;
+        mElectronBeamMode = mode;
     }
 
     /**
@@ -231,16 +234,30 @@ final class ElectronBeam {
         if (!attachEglContext()) {
             return false;
         }
+
+        if (mSurfaceLayout == null) {
+            return false;
+        }
         try {
             // Clear frame to solid black.
             GLES10.glClearColor(0f, 0f, 0f, 1f);
             GLES10.glClear(GLES10.GL_COLOR_BUFFER_BIT);
 
             // Draw the frame.
-            if (level < HSTRETCH_DURATION) {
-                drawHStretch(1.0f - (level / HSTRETCH_DURATION));
+            if (mElectronBeamMode == 2 || (mElectronBeamMode == 3 && mSurfaceLayout.isLandscape())) {
+                // Draw the frame vertical.
+                if (level < VSTRETCH_DURATION) {
+                    drawHStretch(1.0f - (level / VSTRETCH_DURATION));
+                } else {
+                    drawVStretch(1.0f - ((level - VSTRETCH_DURATION) / HSTRETCH_DURATION));
+                }
             } else {
-                drawVStretch(1.0f - ((level - HSTRETCH_DURATION) / VSTRETCH_DURATION));
+                // Draw the frame horizontal.
+                if (level < HSTRETCH_DURATION) {
+                    drawHStretch(1.0f - (level / HSTRETCH_DURATION));
+                } else {
+                    drawVStretch(1.0f - ((level - HSTRETCH_DURATION) / VSTRETCH_DURATION));
+                }
             }
             if (checkGlErrors("drawFrame")) {
                 return false;
@@ -358,11 +375,16 @@ final class ElectronBeam {
         }
     }
 
+
     private static void setVStretchQuad(FloatBuffer vtx, float dw, float dh, float a,
             boolean swap) {
         final float w;
         final float h;
         if (swap) {
+    private void setVStretchQuad(FloatBuffer vtx, float dw, float dh, float a) {
+        final float w;
+        final float h;
+        if (mElectronBeamMode == 2 || (mElectronBeamMode == 3 && mSurfaceLayout.isLandscape())) {
             w = dw - (dw * a);
             h = dh + (dh * a);
         } else {
@@ -383,6 +405,15 @@ final class ElectronBeam {
             h = 2 * dh * (1.0f - a);
         } else {
             w = 2 * dw * (1.0f - a);
+
+    private void setHStretchQuad(FloatBuffer vtx, float dw, float dh, float a) {
+        final float w;
+        final float h;
+        if (mElectronBeamMode == 2 || (mElectronBeamMode == 3 && mSurfaceLayout.isLandscape())) {
+            w = 1.0f;
+            h = dw + (dw * a);
+        } else {
+            w = dw + (dw * a);
             h = 1.0f;
         }
         final float x = (dw - w) * 0.5f;
@@ -716,6 +747,7 @@ final class ElectronBeam {
         private final DisplayManagerService mDisplayManager;
         private SurfaceControl mSurfaceControl;
         private final int mHWRotation;
+        private boolean mIsLandscape;
 
         public NaturalSurfaceLayout(DisplayManagerService displayManager,
                 SurfaceControl surfaceControl, int hwRotation) {
@@ -732,6 +764,10 @@ final class ElectronBeam {
             mDisplayManager.unregisterDisplayTransactionListener(this);
         }
 
+        public boolean isLandscape() {
+            return mIsLandscape;
+        }
+
         @Override
         public void onDisplayTransaction() {
             synchronized (this) {
@@ -744,18 +780,22 @@ final class ElectronBeam {
                     case Surface.ROTATION_0:
                         mSurfaceControl.setPosition(0, 0);
                         mSurfaceControl.setMatrix(1, 0, 0, 1);
+                        mIsLandscape = false;
                         break;
                     case Surface.ROTATION_90:
                         mSurfaceControl.setPosition(0, displayInfo.logicalHeight);
                         mSurfaceControl.setMatrix(0, -1, 1, 0);
+                        mIsLandscape = true;
                         break;
                     case Surface.ROTATION_180:
                         mSurfaceControl.setPosition(displayInfo.logicalWidth, displayInfo.logicalHeight);
                         mSurfaceControl.setMatrix(-1, 0, 0, -1);
+                        mIsLandscape = false;
                         break;
                     case Surface.ROTATION_270:
                         mSurfaceControl.setPosition(displayInfo.logicalWidth, 0);
                         mSurfaceControl.setMatrix(0, 1, -1, 0);
+                        mIsLandscape = true;
                         break;
                 }
             }
