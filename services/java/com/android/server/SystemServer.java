@@ -51,6 +51,7 @@ import android.view.WindowManager;
 import com.android.internal.R;
 import com.android.internal.os.BinderInternal;
 import com.android.internal.os.SamplingProfilerIntegration;
+import com.android.server.HybridService;
 import com.android.server.accessibility.AccessibilityManagerService;
 import com.android.server.accounts.AccountManagerService;
 import com.android.server.am.ActivityManagerService;
@@ -164,6 +165,7 @@ class ServerThread {
         TelephonyRegistry telephonyRegistry = null;
         MSimTelephonyRegistry msimTelephonyRegistry = null;
         ConsumerIrService consumerIr = null;
+        HybridService hybridService = null;
 
         // Create a handler thread just for the window manager to enjoy.
         HandlerThread wmHandlerThread = new HandlerThread("WindowManager");
@@ -287,6 +289,10 @@ class ServerThread {
 
             Slog.i(TAG, "System Content Providers");
             ActivityManagerService.installSystemProviders();
+
+            Slog.i(TAG, "Hybrid Service");
+            hybridService = new HybridService();
+            ServiceManager.addService(Context.HYBRID_SERVICE, hybridService);
 
             Slog.i(TAG, "Lights Service");
             lights = new LightsService(context);
@@ -1073,6 +1079,7 @@ class ServerThread {
                 } catch (Throwable e) {
                     reportWtf("making Recognition Service ready", e);
                 }
+
                 Watchdog.getInstance().start();
 
                 // It is now okay to let the various system services start their

@@ -24,6 +24,9 @@ import android.content.IntentFilter;
 import android.database.ContentObserver;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.os.AppChangedBinder;
+import android.os.AppChangedCallback;
+import android.os.HybridManager;
 import android.os.Handler;
 import android.os.UserHandle;
 import android.provider.Settings;
@@ -33,6 +36,7 @@ import android.text.format.DateFormat;
 import android.text.style.CharacterStyle;
 import android.text.style.RelativeSizeSpan;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.View;
 import android.widget.TextView;
 
@@ -50,19 +54,20 @@ import libcore.icu.LocaleData;
 /**
  * Digital clock for the status bar.
  */
-public class Clock extends TextView implements DemoMode {
+public class Clock extends TextView implements DemoMode, AppChangedCallback {
     protected boolean mAttached;
     protected Calendar mCalendar;
     protected String mClockFormatString;
     protected SimpleDateFormat mClockFormat;
     protected Locale mLocale;
-
+    private HybridManager mHybridManager;
 
     public static final int AM_PM_STYLE_GONE    = 0;
     public static final int AM_PM_STYLE_SMALL   = 1;
     public static final int AM_PM_STYLE_NORMAL  = 2;
 
     private static int AM_PM_STYLE = AM_PM_STYLE_GONE;
+    private static final boolean DEBUG_HYBRID = HybridManager.DEBUG;
 
     public static final int CLOCK_DATE_DISPLAY_GONE = 0;
     public static final int CLOCK_DATE_DISPLAY_SMALL = 1;
@@ -141,6 +146,8 @@ public class Clock extends TextView implements DemoMode {
 
     public Clock(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
+        AppChangedBinder.register(this);
+        mHybridManager = (HybridManager) context.getSystemService(Context.HYBRID_SERVICE);
     }
 
     @Override
@@ -208,6 +215,15 @@ public class Clock extends TextView implements DemoMode {
         if (mDemoMode) return;
         mCalendar.setTimeInMillis(System.currentTimeMillis());
         setText(getSmallTime());
+    }
+
+    @Override
+    public void appChanged() {
+        if(mHybridManager != null) {
+            if (DEBUG_HYBRID) Log.d("Clock-HYRBID", "Setting clock color to " + mHybridManager.getStatusBarIconColor());
+            setTextColor(mHybridManager.getStatusBarIconColor());
+            postInvalidate();
+         }
     }
 
     private final CharSequence getSmallTime() {
