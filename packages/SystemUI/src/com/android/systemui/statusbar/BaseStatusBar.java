@@ -23,11 +23,11 @@ import android.app.Notification;
 import android.app.PendingIntent;
 import android.app.TaskStackBuilder;
 import android.content.BroadcastReceiver;
-<<<<<<< HEAD
+
 import android.content.ContentResolver;
-=======
+
 import android.content.ComponentName;
->>>>>>> aa7d9907... [2/2] Frameworks: HALO
+
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
