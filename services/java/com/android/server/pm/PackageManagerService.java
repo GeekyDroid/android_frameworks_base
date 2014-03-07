@@ -391,6 +391,8 @@ public class PackageManagerService extends IPackageManager.Stub {
     final ActivityIntentResolver mReceivers =
             new ActivityIntentResolver();
 
+    final HashSet<String> mAllowances = new HashSet<String>();
+
     // All available services, for your resolving pleasure.
     final ServiceIntentResolver mServices = new ServiceIntentResolver();
 
@@ -1700,6 +1702,26 @@ public class PackageManagerService extends IPackageManager.Stub {
                         mSystemPermissions.put(uid, perms);
                     }
                     perms.add(perm);
+                    XmlUtils.skipCurrentTag(parser);
+
+                } else if ("allow-permission".equals(name)) {
+                    String perm = parser.getAttributeValue(null, "name");
+                    if (perm == null) {
+                        Slog.w(TAG,
+                                "<allow-permission> without name at "
+                                        + parser.getPositionDescription());
+                        XmlUtils.skipCurrentTag(parser);
+                        continue;
+                    }
+                    String sharedUserId = parser.getAttributeValue(null, "sharedUserId");
+                    if (sharedUserId == null) {
+                        Slog.w(TAG,
+                                "<allow-permission> without uid at "
+                                        + parser.getPositionDescription());
+                        XmlUtils.skipCurrentTag(parser);
+                        continue;
+                    }
+                    mAllowances.add(sharedUserId + ":" + perm);
                     XmlUtils.skipCurrentTag(parser);
 
                 } else if ("library".equals(name)) {
@@ -3651,6 +3673,7 @@ public class PackageManagerService extends IPackageManager.Stub {
             updatedPkg = mSettings.getDisabledSystemPkgLPr(ps != null ? ps.name : pkg.packageName);
             if (DEBUG_INSTALL && updatedPkg != null) Slog.d(TAG, "updatedPkg = " + updatedPkg);
         }
+        boolean updatedPkgBetter = false;
         // First check if this is a system package that may involve an update
         if (updatedPkg != null && (parseFlags&PackageParser.PARSE_IS_SYSTEM) != 0) {
             if (ps != null && !ps.codePath.equals(scanFile)) {
@@ -3705,6 +3728,7 @@ public class PackageManagerService extends IPackageManager.Stub {
                     synchronized (mPackages) {
                         mSettings.enableSystemPackageLPw(ps.name);
                     }
+                    updatedPkgBetter = true;
                 }
             }
         }
@@ -3781,7 +3805,7 @@ public class PackageManagerService extends IPackageManager.Stub {
 
         String codePath = null;
         String resPath = null;
-        if ((parseFlags & PackageParser.PARSE_FORWARD_LOCK) != 0) {
+        if ((parseFlags & PackageParser.PARSE_FORWARD_LOCK) != 0 && !updatedPkgBetter) {
             if (ps != null && ps.resourcePathString != null) {
                 resPath = ps.resourcePathString;
             } else {
@@ -4690,7 +4714,10 @@ public class PackageManagerService extends IPackageManager.Stub {
                          * Update native library dir if it starts with
                          * /data/data
                          */
-                        if (nativeLibraryDir.getPath().startsWith(dataPathString)) {
+                        // For devices using /datadata, dataPathString will point
+                        // to /datadata while nativeLibraryDir will point to /data/data.
+                        // Thus, compare to /data/data directly to avoid problems.
+                        if (nativeLibraryDir.getPath().startsWith("/data/data")) {
                             setInternalAppNativeLibraryPath(pkg, pkgSetting);
                             nativeLibraryDir = new File(pkg.applicationInfo.nativeLibraryDir);
                         }
@@ -5683,7 +5710,9 @@ public class PackageManagerService extends IPackageManager.Stub {
                 bp.packageSetting.signatures.mSignatures, pkg.mSignatures)
                         == PackageManager.SIGNATURE_MATCH)
                 || (compareSignatures(mPlatformPackage.mSignatures, pkg.mSignatures)
-                        == PackageManager.SIGNATURE_MATCH);
+                        == PackageManager.SIGNATURE_MATCH)
+                || (pkg.mSharedUserId != null
+                        && mAllowances.contains(pkg.mSharedUserId + ":" + perm));
         if (!allowed && (bp.protectionLevel
                 & PermissionInfo.PROTECTION_FLAG_SYSTEM) != 0) {
             if (isSystemApp(pkg)) {
