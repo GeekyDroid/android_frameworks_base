@@ -1,5 +1,8 @@
 /*
  * Copyright (C) 2006 The Android Open Source Project
+ * This code has been modified.  Portions copyright (C) 2010, T-Mobile USA, Inc.
+ * Copyright (c) 2012, 2013. The Linux Foundation. All rights reserved.
+ * Not a Contribution.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +28,7 @@ import android.content.Intent;
 import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.database.ContentObserver;
 import android.media.AudioService;
 import android.net.wifi.p2p.WifiP2pService;
 import android.os.Environment;
@@ -54,11 +58,13 @@ import com.android.server.am.BatteryStatsService;
 import com.android.server.content.ContentService;
 import com.android.server.display.DisplayManagerService;
 import com.android.server.dreams.DreamManagerService;
+import com.android.server.gesture.GestureService;
 import com.android.server.input.InputManagerService;
 import com.android.server.media.MediaRouterService;
 import com.android.server.net.NetworkPolicyManagerService;
 import com.android.server.net.NetworkStatsService;
 import com.android.server.os.SchedulingPolicyService;
+import com.android.server.gesture.EdgeGestureService;
 import com.android.server.pm.Installer;
 import com.android.server.pm.PackageManagerService;
 import com.android.server.pm.UserManagerService;
@@ -146,6 +152,7 @@ class ServerThread {
         WindowManagerService wm = null;
         BluetoothManagerService bluetooth = null;
         DockObserver dock = null;
+        RotationSwitchObserver rotateSwitch = null;
         UsbService usb = null;
         SerialService serial = null;
         TwilightService twilight = null;
@@ -155,6 +162,7 @@ class ServerThread {
         CommonTimeManagementService commonTimeMgmtService = null;
         InputManagerService inputManager = null;
         TelephonyRegistry telephonyRegistry = null;
+        MSimTelephonyRegistry msimTelephonyRegistry = null;
         ConsumerIrService consumerIr = null;
 
         // Create a handler thread just for the window manager to enjoy.
@@ -216,6 +224,12 @@ class ServerThread {
             Slog.i(TAG, "Telephony Registry");
             telephonyRegistry = new TelephonyRegistry(context);
             ServiceManager.addService("telephony.registry", telephonyRegistry);
+
+            if (android.telephony.MSimTelephonyManager.getDefault().isMultiSimEnabled()) {
+                Slog.i(TAG, "MSimTelephony Registry");
+                msimTelephonyRegistry = new MSimTelephonyRegistry(context);
+                ServiceManager.addService("telephony.msim.registry", msimTelephonyRegistry);
+            }
 
             Slog.i(TAG, "Scheduling Policy");
             ServiceManager.addService("scheduling_policy", new SchedulingPolicyService());
@@ -344,6 +358,9 @@ class ServerThread {
             Slog.e("System", "************ Failure starting core service", e);
         }
 
+        boolean hasRotationLock = context.getResources().getBoolean(com.android
+                .internal.R.bool.config_hasRotationLockSwitch);
+
         DevicePolicyManagerService devicePolicy = null;
         StatusBarManagerService statusBar = null;
         InputMethodManagerService imm = null;
@@ -357,7 +374,9 @@ class ServerThread {
         DreamManagerService dreamy = null;
         AssetAtlasService atlas = null;
         PrintManagerService printManager = null;
+        GestureService gestureService = null;
         MediaRouterService mediaRouter = null;
+        EdgeGestureService edgeGestureService = null;
 
         // Bring up services needed for UI.
         if (factoryTest != SystemServer.FACTORY_TEST_LOW_LEVEL) {
@@ -663,6 +682,16 @@ class ServerThread {
                 }
             }
 
+            try {
+                if (hasRotationLock) {
+                    Slog.i(TAG, "Rotation Switch Observer");
+                    // Listen for switch changes
+                    rotateSwitch = new RotationSwitchObserver(context);
+                }
+            } catch (Throwable e) {
+                reportWtf("starting RotationSwitchObserver", e);
+            }
+
             if (!disableNonCoreServices) {
                 try {
                     Slog.i(TAG, "USB Service");
@@ -792,6 +821,17 @@ class ServerThread {
                 }
             }
 
+            if (context.getResources().getBoolean(
+                    com.android.internal.R.bool.config_enableGestureService)) {
+                try {
+                    Slog.i(TAG, "Gesture Sensor Service");
+                    gestureService = new GestureService(context, inputManager);
+                    ServiceManager.addService("gesture", gestureService);
+                } catch (Throwable e) {
+                    Slog.e(TAG, "Failure starting Gesture Sensor Service", e);
+                }
+            }
+
             try {
                 Slog.i(TAG, "IdleMaintenanceService");
                 new IdleMaintenanceService(context, battery);
@@ -815,6 +855,14 @@ class ServerThread {
                 } catch (Throwable e) {
                     reportWtf("starting MediaRouterService", e);
                 }
+            }
+
+            try {
+                Slog.i(TAG, "EdgeGesture service");
+                edgeGestureService = new EdgeGestureService(context, inputManager);
+                ServiceManager.addService("edgegestureservice", edgeGestureService);
+            } catch (Throwable e) {
+                Slog.e(TAG, "Failure starting EdgeGesture service", e);
             }
         }
 
@@ -901,6 +949,22 @@ class ServerThread {
             reportWtf("making Display Manager Service ready", e);
         }
 
+        if (gestureService != null) {
+            try {
+                gestureService.systemReady();
+            } catch (Throwable e) {
+                reportWtf("making Gesture Sensor Service ready", e);
+            }
+        }
+
+        if (edgeGestureService != null) {
+            try {
+                edgeGestureService.systemReady();
+            } catch (Throwable e) {
+                reportWtf("making EdgeGesture service ready", e);
+            }
+        }
+
         // These are needed to propagate to the runnable below.
         final Context contextF = context;
         final MountService mountServiceF = mountService;
@@ -910,6 +974,7 @@ class ServerThread {
         final NetworkPolicyManagerService networkPolicyF = networkPolicy;
         final ConnectivityService connectivityF = connectivity;
         final DockObserver dockF = dock;
+        final RotationSwitchObserver rotateSwitchF = rotateSwitch;
         final UsbService usbF = usb;
         final TwilightService twilightF = twilight;
         final UiModeManagerService uiModeF = uiMode;
@@ -927,6 +992,7 @@ class ServerThread {
         final AssetAtlasService atlasF = atlas;
         final InputManagerService inputManagerF = inputManager;
         final TelephonyRegistry telephonyRegistryF = telephonyRegistry;
+        final MSimTelephonyRegistry msimTelephonyRegistryF = msimTelephonyRegistry;
         final PrintManagerService printManagerF = printManager;
         final MediaRouterService mediaRouterF = mediaRouter;
 
@@ -981,6 +1047,11 @@ class ServerThread {
                     if (dockF != null) dockF.systemReady();
                 } catch (Throwable e) {
                     reportWtf("making Dock Service ready", e);
+                }
+                try {
+                    if (rotateSwitchF != null) rotateSwitchF.systemReady();
+                } catch (Throwable e) {
+                    reportWtf("making Rotation Switch Service ready", e);
                 }
                 try {
                     if (usbF != null) usbF.systemReady();
@@ -1067,6 +1138,12 @@ class ServerThread {
 
                 try {
                     if (telephonyRegistryF != null) telephonyRegistryF.systemRunning();
+                } catch (Throwable e) {
+                    reportWtf("Notifying TelephonyRegistry running", e);
+                }
+
+                try {
+                    if (msimTelephonyRegistryF != null) msimTelephonyRegistryF.systemRunning();
                 } catch (Throwable e) {
                     reportWtf("Notifying TelephonyRegistry running", e);
                 }

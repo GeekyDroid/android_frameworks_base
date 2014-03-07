@@ -119,6 +119,7 @@ public class WifiStateMachine extends StateMachine {
     private ConnectivityManager mCm;
 
     private final boolean mP2pSupported;
+    private boolean mIbssSupported;
     private final AtomicBoolean mP2pConnected = new AtomicBoolean(false);
     private boolean mTemporarilyDisconnectWifi = false;
     private final String mPrimaryDeviceType;
@@ -167,6 +168,8 @@ public class WifiStateMachine extends StateMachine {
     private boolean mBluetoothConnectionActive = false;
 
     private PowerManager.WakeLock mSuspendWakeLock;
+
+    private List<WifiChannel> mSupportedChannels;
 
     /**
      * Interval in milliseconds between polling for RSSI
@@ -431,6 +434,12 @@ public class WifiStateMachine extends StateMachine {
     static final int CMD_IP_ADDRESS_REMOVED               = BASE + 141;
     /* Reload all networks and reconnect */
     static final int CMD_RELOAD_TLS_AND_RECONNECT         = BASE + 142;
+
+    /* Is IBSS mode supported by the driver? */
+    public static final int CMD_GET_IBSS_SUPPORTED        = BASE + 143;
+
+    /* Get supported channels */
+    public static final int CMD_GET_SUPPORTED_CHANNELS    = BASE + 144;
 
     /* Wifi state machine modes of operation */
     /* CONNECT_MODE - connect to any 'known' AP when it becomes available */
@@ -1237,6 +1246,7 @@ public class WifiStateMachine extends StateMachine {
      */
     public void setSupplicantRunning(boolean enable) {
         if (enable) {
+            WifiNative.setMode(0);
             sendMessage(CMD_START_SUPPLICANT);
         } else {
             sendMessage(CMD_STOP_SUPPLICANT);
@@ -1248,6 +1258,7 @@ public class WifiStateMachine extends StateMachine {
      */
     public void setHostApRunning(WifiConfiguration wifiConfig, boolean enable) {
         if (enable) {
+            WifiNative.setMode(1);
             sendMessage(CMD_START_AP, wifiConfig);
         } else {
             sendMessage(CMD_STOP_AP);
@@ -1542,6 +1553,27 @@ public class WifiStateMachine extends StateMachine {
         }
         sendMessage(CMD_SET_COUNTRY_CODE, countryCode);
         mWifiP2pChannel.sendMessage(WifiP2pService.SET_COUNTRY_CODE, countryCode);
+    }
+
+    public int syncIsIbssSupported(AsyncChannel channel) {
+        Message resultMsg = channel.sendMessageSynchronously(CMD_GET_IBSS_SUPPORTED);
+        int result = resultMsg.arg1;
+        resultMsg.recycle();
+        return result;
+    }
+
+    public List<WifiChannel> syncGetSupportedChannels(AsyncChannel channel) {
+        Message resultMsg = channel.sendMessageSynchronously(CMD_GET_SUPPORTED_CHANNELS);
+        List<WifiChannel> result = (List<WifiChannel>) resultMsg.obj;
+        resultMsg.recycle();
+        return result;
+    }
+
+    /**
+     * Returns the operational country code
+     */
+    public String getCountryCode() {
+        return mLastSetCountryCode;
     }
 
     /**
@@ -2304,6 +2336,7 @@ public class WifiStateMachine extends StateMachine {
         * or when the driver is hung. Ensure supplicant is stopped here.
         */
         mWifiMonitor.killSupplicant(mP2pSupported);
+        mWifiNative.closeSupplicantConnection();
         sendSupplicantConnectionChangedBroadcast(false);
         setWifiState(WIFI_STATE_DISABLED);
     }
@@ -2488,7 +2521,11 @@ public class WifiStateMachine extends StateMachine {
                 case CMD_ADD_OR_UPDATE_NETWORK:
                 case CMD_REMOVE_NETWORK:
                 case CMD_SAVE_CONFIG:
+                case CMD_GET_IBSS_SUPPORTED:
                     replyToMessage(message, message.what, FAILURE);
+                    break;
+                case CMD_GET_SUPPORTED_CHANNELS:
+                    replyToMessage(message, message.what, (List<WifiChannel>) null);
                     break;
                 case CMD_GET_CONFIGURED_NETWORKS:
                     replyToMessage(message, message.what, (List<WifiConfiguration>) null);
@@ -2777,6 +2814,9 @@ public class WifiStateMachine extends StateMachine {
                     mWifiConfigStore.loadAndEnableAllNetworks();
                     initializeWpsDetails();
 
+                    mIbssSupported = mWifiNative.getModeCapability("IBSS");
+                    mSupportedChannels = mWifiNative.getSupportedChannels();
+
                     sendSupplicantConnectionChangedBroadcast(true);
                     transitionTo(mDriverStartedState);
                     break;
@@ -2805,6 +2845,8 @@ public class WifiStateMachine extends StateMachine {
                 case CMD_SET_FREQUENCY_BAND:
                 case CMD_START_PACKET_FILTERING:
                 case CMD_STOP_PACKET_FILTERING:
+                case CMD_GET_IBSS_SUPPORTED:
+                case CMD_GET_SUPPORTED_CHANNELS:
                     deferMessage(message);
                     break;
                 default:
@@ -2867,6 +2909,10 @@ public class WifiStateMachine extends StateMachine {
                     break;
                 case CMD_SET_OPERATIONAL_MODE:
                     mOperationalMode = message.arg1;
+                    break;
+                case CMD_GET_IBSS_SUPPORTED:
+                case CMD_GET_SUPPORTED_CHANNELS:
+                    deferMessage(message);
                     break;
                 default:
                     return NOT_HANDLED;
@@ -3221,6 +3267,12 @@ public class WifiStateMachine extends StateMachine {
                         boolean enable = (message.arg1 == 1);
                         mWifiNative.startTdls(remoteAddress, enable);
                     }
+                    break;
+                case CMD_GET_IBSS_SUPPORTED:
+                    replyToMessage(message, message.what, mIbssSupported ? 1 : 0);
+                    break;
+                case CMD_GET_SUPPORTED_CHANNELS:
+                    replyToMessage(message, message.what, mSupportedChannels);
                     break;
                 default:
                     return NOT_HANDLED;
@@ -3886,9 +3938,12 @@ public class WifiStateMachine extends StateMachine {
         }
         @Override
         public void exit() {
-            /* Request a CS wakelock during transition to mobile */
-            checkAndSetConnectivityInstance();
-            mCm.requestNetworkTransitionWakelock(getName());
+            if (Settings.Global.getInt(mContext.getContentResolver(),
+                    Settings.Global.AIRPLANE_MODE_ON, 0) != 1) {
+                /* Request a CS wakelock during transition to mobile */
+                checkAndSetConnectivityInstance();
+                mCm.requestNetworkTransitionWakelock(getName());
+            }
         }
     }
 
@@ -3965,7 +4020,11 @@ public class WifiStateMachine extends StateMachine {
                  * cleared
                  */
                 if (!mScanResultIsPending) {
-                    mWifiNative.enableBackgroundScan(true);
+                    if (!mWifiNative.enableBackgroundScan(true)) {
+                        setScanAlarm(true);
+                    } else {
+                        setScanAlarm(false);
+                    }
                 }
             } else {
                 setScanAlarm(true);
@@ -4019,8 +4078,11 @@ public class WifiStateMachine extends StateMachine {
                 case CMD_ENABLE_BACKGROUND_SCAN:
                     mEnableBackgroundScan = (message.arg1 == 1);
                     if (mEnableBackgroundScan) {
-                        mWifiNative.enableBackgroundScan(true);
-                        setScanAlarm(false);
+                        if (!mWifiNative.enableBackgroundScan(true)) {
+                            setScanAlarm(true);
+                        } else {
+                            setScanAlarm(false);
+                        }
                     } else {
                         mWifiNative.enableBackgroundScan(false);
                         setScanAlarm(true);
@@ -4046,7 +4108,11 @@ public class WifiStateMachine extends StateMachine {
                 case WifiMonitor.SCAN_RESULTS_EVENT:
                     /* Re-enable background scan when a pending scan result is received */
                     if (mEnableBackgroundScan && mScanResultIsPending) {
-                        mWifiNative.enableBackgroundScan(true);
+                        if (!mWifiNative.enableBackgroundScan(true)) {
+                            setScanAlarm(true);
+                        } else {
+                            setScanAlarm(false);
+                        }
                     }
                     /* Handled in parent state */
                     ret = NOT_HANDLED;
@@ -4065,6 +4131,13 @@ public class WifiStateMachine extends StateMachine {
                         if (DBG) log("Turn on scanning after p2p disconnected");
                         sendMessageDelayed(obtainMessage(CMD_NO_NETWORKS_PERIODIC_SCAN,
                                     ++mPeriodicScanToken, 0), mSupplicantScanIntervalMs);
+                    } else if (mEnableBackgroundScan && !mP2pConnected.get() &&
+                               (mWifiConfigStore.getConfiguredNetworks().size() != 0)) {
+                        if (!mWifiNative.enableBackgroundScan(true)) {
+                            setScanAlarm(true);
+                        } else {
+                            setScanAlarm(false);
+                        }
                     }
                 case CMD_RECONNECT:
                 case CMD_REASSOCIATE:
