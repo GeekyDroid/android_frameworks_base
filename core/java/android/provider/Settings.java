@@ -2732,7 +2732,6 @@ public final class Settings {
         public static final String EGG_MODE = "egg_mode";
 
         /**
-<<<<<<< HEAD
          * Whether to wake the screen with the camera key half-press.
          * @hide
          */
