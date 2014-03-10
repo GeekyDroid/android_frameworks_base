@@ -34,6 +34,11 @@
     <string name="reboot_confirm" product="tablet">Your tablet will reboot.</string>
     <string name="reboot_confirm" product="default">Your phone will reboot.</string>
 
+    <string name="global_action_choose_profile">choose profile</string>
+    <string name="profile_none">none profile</string>
+    <string name="profile_picker_title">pick profile</string>
+    <string name="wildcardProfile">1</string>
+
     <!-- Reboot progress dialog. This is shown if the user chooses to reboot the device. -->
     <string name="reboot_progress">Rebooting\u2026</string>
 
