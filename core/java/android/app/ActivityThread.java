@@ -4184,7 +4184,7 @@ public final class ActivityThread {
 		AppChangedBinder.updateConfig(mConfiguration);
         Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
 
-        if (data.persistent) {
+        if (data.persistent) {h
             // Persistent processes on low-memory devices do not get to
             // use hardware accelerated drawing, since this can add too much
             // overhead to the process.
