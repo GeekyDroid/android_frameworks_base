@@ -2743,6 +2743,12 @@ public final class Settings {
         public static final String EGG_MODE = "egg_mode";
 
         /**
+         * Developer options - Navigation Bar show switch
+         * @hide
+         */
+        public static final String DEV_FORCE_SHOW_NAVBAR = "dev_force_show_navbar";
+
+        /**
          * Whether to wake the screen with the camera key half-press.
          * @hide
          */
@@ -2883,6 +2889,12 @@ public final class Settings {
          * @hide
          */
         public static final String GESTURES_DOUBLE_TAP = "gestures_double_tap";
+
+        /**
+         * Use EdgeGesture Service for system gestures in PhoneWindowManager
+         * @hide
+         */
+        public static final String USE_EDGE_SERVICE_FOR_GESTURES = "edge_service_for_gestures";
 
         /**
          * Action to perform when the home key is long-pressed.
